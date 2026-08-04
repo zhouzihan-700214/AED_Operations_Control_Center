@@ -1,10 +1,10 @@
 # AED Operations Control System
 
-## Current release: v10.5 Strict Signed-In OneDrive Round-Trip
+## Current release: v10.6 Runtime Secrets Refresh
 
-Build ID: `2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP`
+Build ID: `2026-08-05-v10.6-SECRETS-RUNTIME-REFRESH`
 
-This build verifies the complete signed-in data path across the official OneDrive Excel workbook, website cache, PM Checklist, PM Planning, Unit Profiles, Service Records, Issues, map workflow state and the separate OneDrive system-state archive. Production mode now refuses local workbook or stale CSV fallback. See `STRICT_ONEDRIVE_FULL_ROUNDTRIP_AUDIT_v10_5.md`.
+This build keeps the strict signed-in OneDrive data path and refreshes Microsoft settings directly from current Streamlit runtime Secrets before service imports. It also provides safe missing-key diagnostics. See `RUNTIME_SECRETS_FIX_v10_6.md`.
 
 ## Historical v8 Service Record Scope
 

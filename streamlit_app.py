@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from collections.abc import Mapping
+import os
 import uuid
 
 import streamlit as st
@@ -96,7 +98,7 @@ def _apply_config_compatibility() -> None:
     config.MICROSOFT_CONFIG.setdefault("system_state_path", "/AED System/AED_System_State.zip")
 
     scalar_defaults: dict[str, Any] = {
-        "BUILD_ID": "2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP",
+        "BUILD_ID": "2026-08-05-v10.6-SECRETS-RUNTIME-REFRESH",
         "AUDIT_USERS": ("Zihan", "Supervisor", "Technician 1", "Technician 2"),
         "ONEDRIVE_CLOUD_ENABLED": False,
         "ALLOW_LOCAL_DATA_MODE": False,
@@ -162,7 +164,175 @@ def _apply_config_compatibility() -> None:
         config.ensure_project_directories = ensure_project_directories
 
 
+
+def _plain_mapping(value: Any) -> dict[str, Any]:
+    """Return a normal dictionary for Streamlit Secret/AttrDict values."""
+
+    if isinstance(value, Mapping):
+        return {str(key): item for key, item in value.items()}
+    try:
+        return {str(key): item for key, item in dict(value).items()}
+    except (TypeError, ValueError):
+        return {}
+
+
+def _first_nonempty(mapping: Mapping[str, Any], aliases: tuple[str, ...]) -> str:
+    """Read the first non-empty alias without ever logging a credential."""
+
+    for alias in aliases:
+        value = mapping.get(alias)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _runtime_secret_maps() -> tuple[dict[str, Any], dict[str, Any], str]:
+    """Read current Streamlit Secrets on every process start/rerun.
+
+    Older builds loaded secrets only when ``config.py`` was first imported. If
+    Streamlit Cloud Secrets were saved after the process had already imported
+    the module, the cached empty configuration remained active. This reader
+    refreshes the values directly from ``st.secrets`` and also recognises a few
+    legacy section/key spellings used by earlier project builds.
+    """
+
+    try:
+        root = _plain_mapping(getattr(st, "secrets", {}))
+    except Exception:
+        root = {}
+
+    section: dict[str, Any] = {}
+    section_name = ""
+    for candidate in ("microsoft", "Microsoft", "MICROSOFT", "MICROSOFT_CONFIG"):
+        candidate_section = _plain_mapping(root.get(candidate, {}))
+        if candidate_section:
+            section = candidate_section
+            section_name = f"[{candidate}]"
+            break
+
+    if section_name:
+        source = section_name
+    elif any(
+        key in root
+        for key in (
+            "client_id",
+            "CLIENT_ID",
+            "microsoft_client_id",
+            "MICROSOFT_CLIENT_ID",
+        )
+    ):
+        source = "root-level legacy keys"
+    else:
+        source = "no Microsoft section detected"
+    return section, root, source
+
+
+def _refresh_runtime_cloud_configuration() -> None:
+    """Refresh Microsoft and deployment settings before service imports.
+
+    The standard and recommended format remains a lowercase ``[microsoft]``
+    section. Legacy aliases are accepted only to prevent an already configured
+    deployment from being incorrectly treated as unconfigured.
+    """
+
+    section, root, source = _runtime_secret_maps()
+    existing = _plain_mapping(getattr(config, "MICROSOFT_CONFIG", {}))
+
+    aliases: dict[str, tuple[str, ...]] = {
+        "client_id": (
+            "client_id",
+            "clientId",
+            "CLIENT_ID",
+            "microsoft_client_id",
+            "MICROSOFT_CLIENT_ID",
+        ),
+        "client_secret": (
+            "client_secret",
+            "clientSecret",
+            "CLIENT_SECRET",
+            "microsoft_client_secret",
+            "MICROSOFT_CLIENT_SECRET",
+        ),
+        "authority": (
+            "authority",
+            "AUTHORITY",
+            "microsoft_authority",
+            "MICROSOFT_AUTHORITY",
+        ),
+        "redirect_uri": (
+            "redirect_uri",
+            "redirectUri",
+            "REDIRECT_URI",
+            "microsoft_redirect_uri",
+            "MICROSOFT_REDIRECT_URI",
+        ),
+        "onedrive_file_path": (
+            "onedrive_file_path",
+            "onedriveFilePath",
+            "ONEDRIVE_FILE_PATH",
+            "microsoft_onedrive_file_path",
+        ),
+        "system_state_path": (
+            "system_state_path",
+            "systemStatePath",
+            "SYSTEM_STATE_PATH",
+            "microsoft_system_state_path",
+        ),
+    }
+    environment_aliases: dict[str, tuple[str, ...]] = {
+        "client_id": ("MICROSOFT_CLIENT_ID",),
+        "client_secret": ("MICROSOFT_CLIENT_SECRET",),
+        "authority": ("MICROSOFT_AUTHORITY",),
+        "redirect_uri": ("MICROSOFT_REDIRECT_URI",),
+        "onedrive_file_path": ("MICROSOFT_ONEDRIVE_FILE_PATH",),
+        "system_state_path": ("MICROSOFT_SYSTEM_STATE_PATH",),
+    }
+
+    resolved: dict[str, str] = {}
+    for key, key_aliases in aliases.items():
+        value = _first_nonempty(section, key_aliases)
+        if not value:
+            value = _first_nonempty(root, key_aliases)
+        if not value:
+            value = _first_nonempty(os.environ, environment_aliases[key])
+        if not value:
+            value = str(existing.get(key, "") or "").strip()
+        resolved[key] = value
+
+    resolved["authority"] = (
+        resolved["authority"] or "https://login.microsoftonline.com/consumers"
+    )
+    resolved["onedrive_file_path"] = (
+        resolved["onedrive_file_path"] or "/AED System/IB_list_TEST.xlsx"
+    )
+    resolved["system_state_path"] = (
+        resolved["system_state_path"] or "/AED System/AED_System_State.zip"
+    )
+
+    required = ("client_id", "client_secret", "redirect_uri", "onedrive_file_path")
+    missing = tuple(key for key in required if not resolved.get(key))
+    config.MICROSOFT_CONFIG = resolved
+    config.ONEDRIVE_CLOUD_ENABLED = not missing
+    config.MICROSOFT_SECRET_SOURCE = source
+    config.MICROSOFT_MISSING_KEYS = missing
+
+    deployment = _plain_mapping(root.get("deployment", {}))
+    raw_local = _first_nonempty(
+        deployment,
+        ("allow_local_data_mode", "ALLOW_LOCAL_DATA_MODE"),
+    ) or str(os.getenv("AED_ALLOW_LOCAL_DATA_MODE", "false"))
+    allow_local = raw_local.strip().casefold() in {"1", "true", "yes", "on"}
+    config.ALLOW_LOCAL_DATA_MODE = allow_local
+    config.REQUIRE_ONEDRIVE_SIGN_IN = not allow_local
+
+    if config.ONEDRIVE_CLOUD_ENABLED:
+        file_name = Path(resolved["onedrive_file_path"]).name or "IB_list_TEST.xlsx"
+        config.EXCEL_FILE = Path(config.ONEDRIVE_CACHE_DIR) / file_name
+        config.LOCK_FILE = config.EXCEL_FILE.with_suffix(config.EXCEL_FILE.suffix + ".lock")
+
+
 _apply_config_compatibility()
+_refresh_runtime_cloud_configuration()
 
 # Import modules, not individual functions.  The entrypoint therefore has no
 # fragile ``from module import newly_added_symbol`` dependencies.  A mixed or
@@ -280,6 +450,28 @@ def render_microsoft_sign_in_gate() -> None:
                 "This deployment is configured for the official OneDrive data source, "
                 "but the Microsoft settings are incomplete. The application will not "
                 "fall back to the bundled workbook or a stale CSV cache."
+            )
+            missing = tuple(getattr(config, "MICROSOFT_MISSING_KEYS", ()))
+            source = str(
+                getattr(config, "MICROSOFT_SECRET_SOURCE", "unknown") or "unknown"
+            )
+            st.write(f"Secrets source detected: `{source}`")
+            labels = {
+                "client_id": "client_id",
+                "client_secret": "client_secret",
+                "redirect_uri": "redirect_uri",
+                "onedrive_file_path": "onedrive_file_path",
+            }
+            st.code(
+                "\n".join(
+                    f"{'MISSING' if key in missing else 'CONFIGURED'}  {label}"
+                    for key, label in labels.items()
+                ),
+                language="text",
+            )
+            st.caption(
+                "Credential values are never displayed. Secret section and key names are "
+                "case-sensitive in TOML; the recommended section is exactly [microsoft]."
             )
             st.code(
                 "[microsoft]\n"

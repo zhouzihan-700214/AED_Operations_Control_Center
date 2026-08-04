@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_v7_build_identifier():
-    assert BUILD_ID == "2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP"
+    assert BUILD_ID == "2026-08-05-v10.6-SECRETS-RUNTIME-REFRESH"
 
 
 def test_management_uses_stable_cards_and_one_full_width_filter_workspace():

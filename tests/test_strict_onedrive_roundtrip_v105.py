@@ -165,6 +165,12 @@ def test_missing_cloud_configuration_is_blocked_in_production(
         def code(self, value, **kwargs):
             self.messages.append(str(value))
 
+        def write(self, value):
+            self.messages.append(str(value))
+
+        def caption(self, value):
+            self.messages.append(str(value))
+
         def stop(self):
             raise StopCalled
 

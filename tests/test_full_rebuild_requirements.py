@@ -23,7 +23,7 @@ def _runtime_python_text() -> str:
 
 
 def test_full_rebuild_has_unique_deployment_marker() -> None:
-    assert BUILD_ID == "2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP"
+    assert BUILD_ID == "2026-08-05-v10.6-SECRETS-RUNTIME-REFRESH"
     navigation = Path("ui/navigation.py").read_text(encoding="utf-8")
     assert "build_id" in navigation
 
