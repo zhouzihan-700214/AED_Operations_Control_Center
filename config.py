@@ -12,7 +12,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 BASE_DIR = PROJECT_ROOT
-BUILD_ID = "2026-08-04-v10.2-TODAYS-ISSUES"
+BUILD_ID = "2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP"
 
 EXTERNAL_DATA_DIR = PROJECT_ROOT / "external_data"
 DATA_DIR = PROJECT_ROOT / "data"
@@ -72,6 +72,22 @@ ONEDRIVE_CLOUD_ENABLED = all(
     MICROSOFT_CONFIG.get(key)
     for key in ("client_id", "client_secret", "redirect_uri", "onedrive_file_path")
 )
+
+
+def _deployment_configuration() -> dict[str, Any]:
+    section = _secret_section("deployment")
+    raw_allow_local = str(
+        section.get("allow_local_data_mode", os.getenv("AED_ALLOW_LOCAL_DATA_MODE", "false"))
+        or "false"
+    ).strip().casefold()
+    return {
+        "allow_local_data_mode": raw_allow_local in {"1", "true", "yes", "on"},
+    }
+
+
+DEPLOYMENT_CONFIG = _deployment_configuration()
+ALLOW_LOCAL_DATA_MODE = bool(DEPLOYMENT_CONFIG["allow_local_data_mode"])
+REQUIRE_ONEDRIVE_SIGN_IN = not ALLOW_LOCAL_DATA_MODE
 
 ONEDRIVE_CACHE_DIR = DATA_DIR / "onedrive_workbook_cache"
 ONEDRIVE_SYNC_STATE_FILE = DATA_DIR / "onedrive_sync_state.json"

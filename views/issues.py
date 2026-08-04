@@ -27,6 +27,7 @@ from services.issue_service import (
 )
 
 from ui.components import page_header
+from utils.date_utils import application_today
 from utils.text_utils import clean_text
 
 
@@ -866,7 +867,7 @@ ISSUE_VIEW_OPTIONS = ["All Issues", "Today’s Issues"]
 
 def _current_local_date() -> date:
     """Return the application host's local date, matching stored Issue timestamps."""
-    return datetime.now().astimezone().date()
+    return application_today()
 
 
 def _records_reported_on(records: pd.DataFrame, target_date: date) -> pd.DataFrame:
@@ -1081,9 +1082,30 @@ def _combined_unique_values(dataframe: pd.DataFrame, columns: list[str]) -> list
     return sorted(values, key=str.casefold)
 
 
+def _split_multi_values(value: object) -> list[str]:
+    """Split semicolon-delimited multi-select values without partial matching."""
+
+    return [clean_text(item) for item in clean_text(value).split(";") if clean_text(item)]
+
+
+def _issue_type_options(dataframe: pd.DataFrame) -> list[str]:
+    values: set[str] = set()
+    if "Issue Type" in dataframe.columns:
+        for value in dataframe["Issue Type"].tolist():
+            values.update(_split_multi_values(value))
+    return sorted(values, key=str.casefold)
+
+
+def _issue_type_matches(value: object, selected_type: str) -> bool:
+    if selected_type == "All Issue Types":
+        return True
+    selected = clean_text(selected_type).casefold()
+    return any(item.casefold() == selected for item in _split_multi_values(value))
+
+
 def _enrich_issue_records(records: pd.DataFrame, issue_csv_file: str | Path) -> pd.DataFrame:
     enriched = records.copy()
-    for column in ("_Verified By", "_Verified At", "_Assigned Date"):
+    for column in ("_Verified By", "_Verified At", "_Assigned Date", "_Resolution Submitted By All"):
         enriched[column] = ""
 
     reviewed_at = enriched["Reviewed At"].astype(str).str.strip()
@@ -1098,13 +1120,17 @@ def _enrich_issue_records(records: pd.DataFrame, issue_csv_file: str | Path) -> 
     if submissions.empty:
         enriched["_Verified By"] = enriched["Closed By"]
         enriched["_Verified At"] = enriched["Closed At"]
+        enriched["_Resolution Submitted By All"] = enriched["Resolution Submitted By"]
         return enriched
 
     verified_by_map: dict[str, str] = {}
     verified_at_map: dict[str, str] = {}
+    submitted_by_map: dict[str, str] = {}
     for issue_id, group in submissions.groupby("Issue ID", dropna=False):
         people = [clean_text(value) for value in group["Verified By"].tolist() if clean_text(value)]
         verified_by_map[clean_text(issue_id)] = "; ".join(dict.fromkeys(people))
+        submitters = [clean_text(value) for value in group["Submitted By"].tolist() if clean_text(value)]
+        submitted_by_map[clean_text(issue_id)] = "; ".join(dict.fromkeys(submitters))
         dated = []
         for value in group["Verified At"].tolist():
             parsed = _parse_datetime(value)
@@ -1116,6 +1142,11 @@ def _enrich_issue_records(records: pd.DataFrame, issue_csv_file: str | Path) -> 
     issue_ids = enriched["Issue ID"].astype(str).str.strip()
     enriched["_Verified By"] = issue_ids.map(verified_by_map).fillna("")
     enriched["_Verified At"] = issue_ids.map(verified_at_map).fillna("")
+    enriched["_Resolution Submitted By All"] = issue_ids.map(submitted_by_map).fillna("")
+    enriched["_Resolution Submitted By All"] = enriched["_Resolution Submitted By All"].where(
+        enriched["_Resolution Submitted By All"].astype(str).str.strip().ne(""),
+        enriched["Resolution Submitted By"],
+    )
     enriched["_Verified By"] = enriched["_Verified By"].where(
         enriched["_Verified By"].astype(str).str.strip().ne(""), enriched["Closed By"]
     )
@@ -1154,7 +1185,7 @@ def _filter_issue_records(
         search_columns = [
             "Issue ID", "Serial Number", "Model", "Location", "Postal Code",
             "Issue Type", "Detailed Description", "Reported By", "Assigned By",
-            "Current Assignee", "Started By", "Resolution Submitted By", "_Verified By",
+            "Current Assignee", "Started By", "_Resolution Submitted By All", "_Verified By",
         ]
         search_mask = pd.Series(False, index=filtered.index)
         for column in search_columns:
@@ -1170,7 +1201,9 @@ def _filter_issue_records(
         filtered = filtered.loc[filtered["Reported At"].map(month_label).eq(selected_month)]
 
     if issue_type != "All Issue Types":
-        filtered = filtered.loc[filtered["Issue Type"].astype(str).str.strip().eq(issue_type)]
+        filtered = filtered.loc[
+            filtered["Issue Type"].map(lambda value: _issue_type_matches(value, issue_type))
+        ]
 
     if status_filter == "Unresolved":
         filtered = filtered.loc[filtered["Status"].isin(UNRESOLVED_STATUSES)]
@@ -1180,7 +1213,7 @@ def _filter_issue_records(
     for column, selected_person in [
         ("Reported By", reported_by), ("Assigned By", assigned_by),
         ("Current Assignee", assigned_to), ("Started By", started_by),
-        ("Resolution Submitted By", resolution_by), ("_Verified By", verified_by),
+        ("_Resolution Submitted By All", resolution_by), ("_Verified By", verified_by),
     ]:
         if not selected_person.startswith("All "):
             filtered = filtered.loc[
@@ -1269,7 +1302,7 @@ def _render_issue_view_selector(records: pd.DataFrame) -> tuple[pd.DataFrame, st
 
 def _render_issue_filters(records: pd.DataFrame) -> pd.DataFrame:
     month_options = ["All Months", *_month_options(records)]
-    type_options = ["All Issue Types", *_unique_values(records, "Issue Type")]
+    type_options = ["All Issue Types", *_issue_type_options(records)]
     lifecycle_order = ["Reported", "Assigned", "In Progress", "Pending Verification", "Reopened", "Closed"]
     existing_statuses = set(_unique_values(records, "Status"))
     status_options = ["All Statuses", "Unresolved"] + [s for s in lifecycle_order if s in existing_statuses]
@@ -1316,7 +1349,7 @@ def _render_issue_filters(records: pd.DataFrame) -> pd.DataFrame:
         with row_three[1]:
             resolution_by = st.selectbox(
                 "Resolution Submitted By",
-                ["All Resolution Submitters", *_unique_values(records, "Resolution Submitted By")],
+                ["All Resolution Submitters", *_unique_values(records, "_Resolution Submitted By All")],
                 key="issue_filter_resolution_by",
             )
         with row_three[2]:

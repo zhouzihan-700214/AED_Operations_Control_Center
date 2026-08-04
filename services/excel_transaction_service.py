@@ -28,6 +28,7 @@ from config import (
     MAX_CACHE_BACKUPS,
     MAX_EXCEL_BACKUPS,
     PRESERVE_CACHE_ONLY_UNITS,
+    ONEDRIVE_CLOUD_ENABLED,
     STAGING_SHEET_NAME,
     SYNC_STATE_FILE,
     TEMP_DIR,
@@ -158,7 +159,7 @@ def _sync_without_relocking() -> SyncResult:
         temp_dir=TEMP_DIR,
         lock_file=EXCEL_OPERATION_LOCK_FILE,
         backup_dir=CACHE_BACKUP_DIR,
-        preserve_cache_only_units=PRESERVE_CACHE_ONLY_UNITS,
+        preserve_cache_only_units=(False if ONEDRIVE_CLOUD_ENABLED else PRESERVE_CACHE_ONLY_UNITS),
         max_backups=MAX_CACHE_BACKUPS,
         acquire_lock=False,
     )

@@ -1,8 +1,12 @@
 # AED Operations Control System
 
-## Current release: v8 Service Record Scope
+## Current release: v10.5 Strict Signed-In OneDrive Round-Trip
 
-Build ID: `2026-08-04-FULL-REBUILD-v8-SERVICE-RECORD-SCOPE`
+Build ID: `2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP`
+
+This build verifies the complete signed-in data path across the official OneDrive Excel workbook, website cache, PM Checklist, PM Planning, Unit Profiles, Service Records, Issues, map workflow state and the separate OneDrive system-state archive. Production mode now refuses local workbook or stale CSV fallback. See `STRICT_ONEDRIVE_FULL_ROUNDTRIP_AUDIT_v10_5.md`.
+
+## Historical v8 Service Record Scope
 
 The Service Records page now provides a clickable scope for **All Records**, **Matched**, **Mismatch** and **Loaner**, with counts calculated against the current Master Table. A linked **Loaner Unit** filter is also available. Mismatch records are identified without adding duplicate Record Postal Code, Master Postal Code or mismatch-reason columns.
 
@@ -86,7 +90,7 @@ The original `PM` and `Commissioning` positions are preserved. The final three o
 ## Validation
 
 - Python compile check: passed for all runtime/test Python files.
-- Automated test suite: **141 passed**.
+- Automated test suite: **160 passed**.
 - Import audit: all production modules imported with dependency stubs.
 - UI dry-render audit: all 9 visible pages and all 5 Unit Profile sections completed without an exception.
 - Runtime source contains no `Asset readiness` label.

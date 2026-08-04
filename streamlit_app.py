@@ -96,9 +96,11 @@ def _apply_config_compatibility() -> None:
     config.MICROSOFT_CONFIG.setdefault("system_state_path", "/AED System/AED_System_State.zip")
 
     scalar_defaults: dict[str, Any] = {
-        "BUILD_ID": "2026-08-04-v10.2-TODAYS-ISSUES",
+        "BUILD_ID": "2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP",
         "AUDIT_USERS": ("Zihan", "Supervisor", "Technician 1", "Technician 2"),
         "ONEDRIVE_CLOUD_ENABLED": False,
+        "ALLOW_LOCAL_DATA_MODE": False,
+        "REQUIRE_ONEDRIVE_SIGN_IN": True,
         "EXCEL_FILE": external_data_dir / "IB_list_TEST.xlsx",
         "EXCEL_SHEET": "Sheet1",
         "EXCEL_HEADER_ROW": 1,
@@ -270,7 +272,24 @@ def initialise_user_session() -> None:
 
 
 def render_microsoft_sign_in_gate() -> None:
+    require_cloud = bool(getattr(config, "REQUIRE_ONEDRIVE_SIGN_IN", True))
     if not config.ONEDRIVE_CLOUD_ENABLED:
+        if require_cloud:
+            st.title("Microsoft OneDrive configuration required")
+            st.error(
+                "This deployment is configured for the official OneDrive data source, "
+                "but the Microsoft settings are incomplete. The application will not "
+                "fall back to the bundled workbook or a stale CSV cache."
+            )
+            st.code(
+                "[microsoft]\n"
+                "client_id = \"...\"\n"
+                "client_secret = \"...\"\n"
+                "redirect_uri = \"https://<your-app>.streamlit.app/\"\n"
+                "onedrive_file_path = \"/AED System/IB_list_TEST.xlsx\"",
+                language="toml",
+            )
+            st.stop()
         return
 
     microsoft_auth_service.handle_auth_callback()
@@ -299,18 +318,27 @@ def render_microsoft_sign_in_gate() -> None:
 
 
 def initialise_operational_storage(*, allow_remote_refresh: bool = True) -> None:
-    """Initialise cloud state, recovery and every local application store."""
+    """Initialise cloud state, recovery and every local application store.
+
+    In the production OneDrive mode, remote data is authoritative. A failed
+    workbook or state-archive bootstrap stops the page instead of silently
+    opening a bundled workbook or an old CSV cache.
+    """
 
     config.ensure_project_directories()
 
     if config.ONEDRIVE_CLOUD_ENABLED and not st.session_state.get("_system_state_bootstrapped", False):
         try:
             result = system_state_service.bootstrap_system_state()
-            st.session_state["_system_state_bootstrapped"] = True
-            if result.changed:
-                st.session_state["system_state_notice"] = result.message
         except Exception as error:
-            st.session_state["system_state_error"] = str(error)
+            raise RuntimeError(
+                "Could not load the operational records from OneDrive: " + str(error)
+            ) from error
+        if not result.success:
+            raise RuntimeError(result.message or "OneDrive system-state bootstrap failed.")
+        st.session_state["_system_state_bootstrapped"] = True
+        if result.changed:
+            st.session_state["system_state_notice"] = result.message
 
     if not st.session_state.get("_recovery_checked", False):
         recovery = recovery_service.recover_incomplete_transaction()
@@ -320,8 +348,22 @@ def initialise_operational_storage(*, allow_remote_refresh: bool = True) -> None
         elif recovery.get("status") == "failed":
             st.session_state["recovery_error"] = recovery.get("message", "")
 
-    if allow_remote_refresh or not Path(config.AED_DATA_FILE).exists():
-        aed_repository.ensure_cache_current(force=False)
+    first_cloud_load = (
+        config.ONEDRIVE_CLOUD_ENABLED
+        and not st.session_state.get("_onedrive_master_bootstrapped", False)
+    )
+    if first_cloud_load or allow_remote_refresh or not Path(config.AED_DATA_FILE).exists():
+        sync_result = aed_repository.ensure_cache_current(force=first_cloud_load)
+        if config.ONEDRIVE_CLOUD_ENABLED and sync_result.status not in {"synced", "up_to_date"}:
+            raise RuntimeError(
+                "Could not load the official OneDrive Excel workbook: "
+                + (sync_result.message or "unknown synchronisation error")
+            )
+        if first_cloud_load:
+            st.session_state["_onedrive_master_bootstrapped"] = True
+            st.session_state["aed_sync_notice"] = (
+                sync_result.message or "Official OneDrive Excel loaded."
+            )
     pm_service.ensure_pm_storage()
     manual_service_storage.ensure_manual_service_storage()
     issue_service.ensure_issue_storage(config.ISSUE_RECORD_FILE)
@@ -486,6 +528,29 @@ def auto_refresh_cloud_data() -> None:
         st.rerun()
 
 
+def flush_system_state_after_page() -> None:
+    """Upload any records written by the rendered page in the same app cycle."""
+
+    if (
+        not config.ONEDRIVE_CLOUD_ENABLED
+        or not microsoft_auth_service.get_authentication_status().authenticated
+    ):
+        return
+    try:
+        result = system_state_service.sync_system_state(allow_download=False)
+    except Exception as error:
+        st.session_state["system_state_error"] = (
+            "The page data was saved locally, but the OneDrive system-record upload failed: "
+            + str(error)
+        )
+        return
+    if result.status == "conflict":
+        st.session_state["system_state_error"] = result.message
+    elif result.uploaded:
+        st.session_state["system_state_notice"] = result.message
+        st.session_state.pop("system_state_error", None)
+
+
 def render_notices() -> None:
     transient = {
         "recovery_notice": st.success,
@@ -534,6 +599,7 @@ def main() -> None:
     auto_refresh_cloud_data()
     render_notices()
     page_registry.render_current_page(st.session_state["page"])
+    flush_system_state_after_page()
 
 
 if __name__ == "__main__":

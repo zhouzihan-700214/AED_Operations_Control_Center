@@ -57,8 +57,12 @@ def _prepare_workbook(*, force: bool) -> str:
 def ensure_cache_current(*, force: bool = False) -> SyncResult:
     global _last_result
     try:
+        cloud_mode = is_cloud_onedrive_enabled()
         _prepare_workbook(force=force)
-        _last_result = sync_excel_to_cache(force=force)
+        _last_result = sync_excel_to_cache(
+            force=force,
+            preserve_cache_only_units=not cloud_mode,
+        )
     except Exception as error:
         _last_result = SyncResult(
             status="failed",
@@ -73,12 +77,22 @@ def ensure_cache_current(*, force: bool = False) -> SyncResult:
 def get_all_units(*, refresh: bool = True, include_inactive: bool = False) -> pd.DataFrame:
     """Return the latest validated AED table, hiding inactive units by default."""
     if refresh:
-        ensure_cache_current(force=False)
+        sync_result = ensure_cache_current(force=False)
+        if is_cloud_onedrive_enabled() and sync_result.status not in {"synced", "up_to_date"}:
+            raise RuntimeError(
+                "The official OneDrive Excel could not be loaded; stale local AED data "
+                "will not be displayed. " + (sync_result.message or "")
+            )
     try:
         dataframe = load_aed_data(AED_CACHE_FILE)
     except Exception:
         if refresh and Path(EXCEL_FILE).exists():
-            ensure_cache_current(force=True)
+            retry = ensure_cache_current(force=True)
+            if is_cloud_onedrive_enabled() and retry.status not in {"synced", "up_to_date"}:
+                raise RuntimeError(
+                    "The official OneDrive Excel could not be reloaded. "
+                    + (retry.message or "")
+                )
             dataframe = load_aed_data(AED_CACHE_FILE)
         else:
             raise

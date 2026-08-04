@@ -23,7 +23,7 @@ def _runtime_python_text() -> str:
 
 
 def test_full_rebuild_has_unique_deployment_marker() -> None:
-    assert BUILD_ID == "2026-08-04-v10.2-TODAYS-ISSUES"
+    assert BUILD_ID == "2026-08-05-v10.5-STRICT-ONEDRIVE-ROUNDTRIP"
     navigation = Path("ui/navigation.py").read_text(encoding="utf-8")
     assert "build_id" in navigation
 
@@ -185,7 +185,7 @@ def test_initial_workbook_refresh_is_also_paused_in_active_editors() -> None:
     source = Path("streamlit_app.py").read_text(encoding="utf-8")
     assert "editing_at_start = user_is_editing()" in source
     assert "initialise_operational_storage(allow_remote_refresh=not editing_at_start)" in source
-    assert "if allow_remote_refresh or not Path(config.AED_DATA_FILE).exists():" in source
+    assert "if first_cloud_load or allow_remote_refresh or not Path(config.AED_DATA_FILE).exists():" in source
 
 
 def test_every_visible_sidebar_page_has_a_registered_renderer() -> None:
